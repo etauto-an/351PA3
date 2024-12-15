@@ -53,45 +53,40 @@ void init_memory(Memory *memory, int total_memory, int page_size) {
  *   - If memory cannot be allocated, the function restores all previously
  * allocated pages for the process.
  */
-int allocate_memory(Memory *memory, int process_id, int num_pieces,
-                    int *piece_sizes) {
-  int pages_needed, free_count, start;
+int allocate_memory(Memory *memory, int process_id, int num_pieces, int *piece_sizes) {
+  int pages_needed, pages_allocated;
+
+  //printf("Debug: Attempting to allocate memory for Process %d\n", process_id);
 
   for (int i = 0; i < num_pieces; i++) {
-    pages_needed = (piece_sizes[i] + memory->page_size - 1) /
-                   memory->page_size;  // Round up
-    free_count = 0;
-    start = -1;
+    pages_needed = (piece_sizes[i] + memory->page_size - 1) / memory->page_size;  // Round up
+    pages_allocated = 0;
 
-    // Find a block of free pages
-    for (int j = 0; j < memory->total_pages; j++) {
-      if (memory->page_table[j] == -1) {  // Free page
-        if (free_count == 0) start = j;
-        free_count++;
-        if (free_count == pages_needed) break;
-      } else {
-        free_count = 0;
+    //printf("Debug: Process %d, Piece %d (%d KB) needs %d pages\n",
+    //       process_id, i + 1, piece_sizes[i], pages_needed);
+
+    // Attempt to allocate as many pages as possible
+    for (int j = 0; j < memory->total_pages && pages_allocated < pages_needed; j++) {
+      if (memory->page_table[j] == -1) {  // Free page found
+        memory->page_table[j] = process_id;
+        pages_allocated++;
       }
     }
 
-    // If enough pages are found, allocate them
-    if (free_count >= pages_needed) {
-      for (int j = start; j < start + pages_needed; j++) {
-        memory->page_table[j] = process_id;
-      }
-    } else {
-      // Not enough memory; roll back previous allocations
-      for (int k = 0; k < memory->total_pages; k++) {
-        if (memory->page_table[k] == process_id) {
-          memory->page_table[k] = -1;
-        }
-      }
-      return 0;  // Allocation failed
+    // Debugging output for allocation
+    //printf("Debug: Process %d, Piece %d allocated %d out of %d pages\n",
+    //       process_id, i + 1, pages_allocated, pages_needed);
+
+    if (pages_allocated < pages_needed) {
+      printf("Warning: Process %d, Piece %d could not allocate all required pages. Partial fit.\n",
+             process_id, i + 1);
     }
   }
 
-  return 1;  // Allocation successful
+  //printf("Debug: Successfully allocated memory for Process %d (partial fits allowed)\n", process_id);
+  return 1;  // Allocation successful, even with partial fit
 }
+
 
 /**
  * Deallocates memory for a process in the memory system.
@@ -112,44 +107,71 @@ void deallocate_memory(Memory *memory, int process_id) {
   }
 }
 
-/**
- * Prints the current memory map.
- *
- * Args:
- *   memory (Memory*): Pointer to the `Memory` structure.
- *
- * Behavior:
- *   - Displays the allocation status of each page in memory.
- *   - Each page is either marked as "Free" or assigned to a process ID.
- */
 void print_memory_map(Memory *memory, int page_size) {
-  int start = -1;  // Start of a free range
-  int current_process = -1;
+    printf("       Memory Map:\n");
 
-  printf("       Memory Map:\n");
+    int start = -1;  // Start of a free range
+    //int current_process = -1;
+    int page_number[1000] = {0};  // Track page numbers for up to 1000 processes
 
-  for (int i = 0; i < memory->total_pages; i++) {
-    if (memory->page_table[i] == -1) {  // Free page
-      if (start == -1) {
-        start = i;  // Mark the start of a free range
-      }
-    } else {
-      if (start != -1) {  // End of a free range
-        printf("       %d-%d: Free frame(s)\n", start * page_size,
-               (i * page_size) - 1);
-        start = -1;  // Reset start
-      }
-      if (current_process != memory->page_table[i]) {
-        current_process = memory->page_table[i];
-        printf("       %d-%d: Process %d, Page %d\n", i * page_size,
-               (i + 1) * page_size - 1, current_process, i + 1);
-      }
+    for (int i = 0; i < memory->total_pages; i++) {
+        int start_address = i * page_size;
+        int end_address = (i + 1) * page_size - 1;
+
+        if (memory->page_table[i] == -1) {  // Free frame
+            if (start == -1) start = start_address;  // Mark the start of free range
+        } else {
+            // If we were tracking a free range, print it
+            if (start != -1) {
+                printf("                  %d-%d: Free frame(s)\n", start, start_address - 1);
+                start = -1;
+            }
+
+            // Print allocated frames
+            int process_id = memory->page_table[i];
+            page_number[process_id]++;  // Increment the global page counter for the process
+
+            printf("                  %d-%d: Process %d, Page %d\n",
+                   start_address, end_address, process_id, page_number[process_id]);
+        }
     }
-  }
 
-  // If free frames extend to the end of memory, print the final range
-  if (start != -1) {
-    printf("       %d-%d: Free frame(s)\n", start * page_size,
-           (memory->total_pages * page_size) - 1);
-  }
+    // Print any remaining free frames
+    if (start != -1) {
+        printf("                  %d-%d: Free frame(s)\n", start, memory->total_pages * page_size - 1);
+    }
 }
+
+
+
+//int main() {
+//    // Initialize memory
+//    Memory memory;
+//    init_memory(&memory, 2000, 100);  // 2000 KB total, 100 KB per page
+//
+//    // Simulate memory allocations
+//    printf("Initial Memory Map:\n");
+//    print_memory_map(&memory, 100);
+//
+//    // Allocate memory for Process 1
+//    int process1_pieces[] = {200, 400};  // 600 KB in total
+//    allocate_memory(&memory, 1, 2, process1_pieces);
+//    printf("\nAfter Allocating Process 1:\n");
+//    print_memory_map(&memory, 100);
+//
+//    // Allocate memory for Process 2
+//    int process2_pieces[] = {300};  // 300 KB
+//    allocate_memory(&memory, 2, 1, process2_pieces);
+//    printf("\nAfter Allocating Process 2:\n");
+//    print_memory_map(&memory, 100);
+//
+//    // Deallocate memory for Process 1
+//    deallocate_memory(&memory, 1);
+//    printf("\nAfter Deallocating Process 1:\n");
+//    print_memory_map(&memory, 100);
+//
+//    // Free allocated memory
+//    free(memory.page_table);
+//
+//    return 0;
+//}
